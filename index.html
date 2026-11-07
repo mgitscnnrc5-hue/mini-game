@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sliding Puzzle Mini Game</title>
+<style>
+  :root {
+    --bg: #07090a;
+    --panel: #111416;
+    --panel-line: #1c2124;
+    --tile: #1d2022;
+    --tile-line: #2a2f32;
+    --empty: #060809;
+    --accent: #3df2a4;
+    --accent-bg: #0b2a20;
+    --danger: #ff5a6a;
+    --text: #e8ecee;
+    --muted: #7d878c;
+    --size: 92px;
+    --gap: 7px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: radial-gradient(ellipse at 50% 30%, #101416 0%, var(--bg) 70%);
+    color: var(--text);
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    user-select: none; -webkit-user-select: none;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+    width: calc(var(--size) * 3 + var(--gap) * 2 + 36px);
+    overflow: hidden;
+    position: relative;
+  }
+  .head {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--panel-line);
+  }
+  .time {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700; font-size: 15px; letter-spacing: .02em;
+    color: var(--accent);
+    min-width: 46px;
+  }
+  .bar {
+    width: 92px; height: 3px; border-radius: 2px;
+    background: #1b2023; overflow: hidden;
+  }
+  .bar > i {
+    display: block; height: 100%; width: 100%;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(61,242,164,.6);
+    transform-origin: left center;
+  }
+  .low .time { color: var(--danger); }
+  .low .bar > i { background: var(--danger); box-shadow: 0 0 8px rgba(255,90,106,.6); }
+
+  .board-wrap { padding: 18px; }
+  .board {
+    position: relative;
+    width: calc(var(--size) * 3 + var(--gap) * 2);
+    height: calc(var(--size) * 2 + var(--gap));
+    background: var(--empty);
+    border-radius: 8px;
+  }
+  .slot {
+    position: absolute; width: var(--size); height: var(--size);
+    border-radius: 8px; background: #0a0d0f;
+  }
+  .tile {
+    position: absolute; left: 0; top: 0;
+    width: var(--size); height: var(--size);
+    border-radius: 8px;
+    background: var(--tile);
+    border: 1px solid var(--tile-line);
+    color: var(--text);
+    font-family: inherit; font-weight: 700; font-size: 24px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    cursor: default;
+    transition: transform .14s cubic-bezier(.3,.7,.3,1), background .15s, border-color .15s, box-shadow .15s;
+  }
+  .tile.movable {
+    background: var(--accent-bg);
+    border-color: rgba(61,242,164,.55);
+    cursor: pointer;
+  }
+  .tile.movable:hover { box-shadow: 0 0 14px rgba(61,242,164,.25); }
+  .tile.correct { color: var(--accent); }
+
+  .overlay {
+    position: absolute; inset: 0;
+    background: rgba(6,8,9,.86);
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    text-align: center;
+    backdrop-filter: blur(2px);
+  }
+  .overlay.show { display: flex; }
+  .overlay h2 { margin: 0; font-size: 20px; letter-spacing: .04em; }
+  .overlay p { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
+  .overlay.win h2 { color: var(--accent); }
+  .overlay.fail h2 { color: var(--danger); }
+  button.retry {
+    font-family: inherit; font-weight: 600; font-size: 13px;
+    background: var(--accent-bg); color: var(--accent);
+    border: 1px solid rgba(61,242,164,.55);
+    padding: 9px 18px; border-radius: 8px; cursor: pointer;
+  }
+  button.retry:hover { box-shadow: 0 0 14px rgba(61,242,164,.25); }
+  .hint {
+    position: fixed; bottom: 18px; left: 0; right: 0; text-align: center;
+    color: var(--muted); font-size: 12px;
+  }
+</style>
+</head>
+<body>
+  <div class="panel" id="panel">
+    <div class="head">
+      <span class="time" id="time">05:00</span>
+      <div class="bar"><i id="fill"></i></div>
+    </div>
+    <div class="board-wrap">
+      <div class="board" id="board"></div>
+    </div>
+    <div class="overlay" id="overlay">
+      <h2 id="ovTitle"></h2>
+      <p id="ovSub"></p>
+      <button class="retry" id="retry">Try again</button>
+    </div>
+  </div>
+  <div class="hint">Put 1–5 in order · click a highlighted tile (or use arrow keys) to slide it into the gap</div>
+
+<script>
+(function () {
+  // ---- config -------------------------------------------------------------
+  var COLS = 3, ROWS = 2, N = COLS * ROWS;
+  var TIME_LIMIT = 300;          // seconds (5:00)
+  var SHUFFLE_MOVES = 60;        // random legal moves from solved state
+  // Hook for a host (e.g. a FiveM NUI wrapper): window.onPuzzleResult = function (success) {}
+  // ---------------------------------------------------------------------------
+
+  var board = document.getElementById('board');
+  var panel = document.getElementById('panel');
+  var timeEl = document.getElementById('time');
+  var fillEl = document.getElementById('fill');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovSub = document.getElementById('ovSub');
+
+  var state, empty, tiles = {}, timer, endAt, running;
+
+  function cssNum(name) {
+    return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+  }
+  function pos(i) {
+    var s = cssNum('--size'), g = cssNum('--gap');
+    return { x: (i % COLS) * (s + g), y: Math.floor(i / COLS) * (s + g) };
+  }
+  function neighbours(i) {
+    var r = Math.floor(i / COLS), c = i % COLS, out = [];
+    if (r > 0) out.push(i - COLS);
+    if (r < ROWS - 1) out.push(i + COLS);
+    if (c > 0) out.push(i - 1);
+    if (c < COLS - 1) out.push(i + 1);
+    return out;
+  }
+  function isSolved() {
+    for (var i = 0; i < N - 1; i++) if (state[i] !== i + 1) return false;
+    return true;
+  }
+
+  function build() {
+    board.innerHTML = '';
+    tiles = {};
+    for (var i = 0; i < N; i++) {
+      var slot = document.createElement('div');
+      slot.className = 'slot';
+      var p = pos(i);
+      slot.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px)';
+      board.appendChild(slot);
+    }
+    for (var n = 1; n < N; n++) {
+      (function (n) {
+        var t = document.createElement('button');
+        t.className = 'tile';
+        t.textContent = n;
+        t.addEventListener('click', function () { tryMove(state.indexOf(n)); });
+        board.appendChild(t);
+        tiles[n] = t;
+      })(n);
+    }
+  }
+
+  function shuffle() {
+    state = [];
+    for (var i = 1; i < N; i++) state.push(i);
+    state.push(0);                       // solved: 1 2 3 / 4 5 _
+    empty = N - 1;
+    var prev = -1;
+    do {
+      for (var k = 0; k < SHUFFLE_MOVES; k++) {
+        var opts = neighbours(empty).filter(function (x) { return x !== prev; });
+        var pick = opts[Math.floor(Math.random() * opts.length)];
+        state[empty] = state[pick]; state[pick] = 0;
+        prev = empty; empty = pick;
+      }
+    } while (isSolved());
+  }
+
+  function render() {
+    var mov = neighbours(empty);
+    for (var i = 0; i < N; i++) {
+      var n = state[i];
+      if (!n) continue;
+      var t = tiles[n], p = pos(i);
+      t.style.transform = 'translate(' + p.x + 'px,' + p.y + 'px)';
+      t.classList.toggle('movable', running && mov.indexOf(i) !== -1);
+      t.classList.toggle('correct', n === i + 1);
+    }
+  }
+
+  function tryMove(i) {
+    if (!running) return;
+    if (neighbours(empty).indexOf(i) === -1) return;
+    state[empty] = state[i]; state[i] = 0; empty = i;
+    render();
+    if (isSolved()) finish(true);
+  }
+
+  function fmt(s) {
+    s = Math.max(0, Math.ceil(s));
+    var m = Math.floor(s / 60), r = s % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r;
+  }
+
+  function tick() {
+    var left = (endAt - Date.now()) / 1000;
+    timeEl.textContent = fmt(left);
+    fillEl.style.transform = 'scaleX(' + Math.max(0, left / TIME_LIMIT) + ')';
+    panel.classList.toggle('low', left <= 30);
+    if (left <= 0) finish(false);
+  }
+
+  function finish(success) {
+    running = false;
+    clearInterval(timer);
+    render();
+    overlay.className = 'overlay show ' + (success ? 'win' : 'fail');
+    ovTitle.textContent = success ? 'SUCCESS' : 'FAILED';
+    ovSub.textContent = success
+      ? 'Solved with ' + fmt(Math.max(0, (endAt - Date.now()) / 1000)) + ' remaining'
+      : 'Time ran out';
+    try { if (typeof window.onPuzzleResult === 'function') window.onPuzzleResult(success); } catch (e) {}
+  }
+
+  function start() {
+    overlay.className = 'overlay';
+    panel.classList.remove('low');
+    build();
+    shuffle();
+    running = true;
+    render();
+    endAt = Date.now() + TIME_LIMIT * 1000;
+    tick();
+    clearInterval(timer);
+    timer = setInterval(tick, 200);
+  }
+
+  // Arrow keys move the tile that sits on that side of the gap into the gap
+  document.addEventListener('keydown', function (e) {
+    var d = { ArrowLeft: 1, ArrowRight: -1, ArrowUp: COLS, ArrowDown: -COLS }[e.key];
+    if (d === undefined) return;
+    e.preventDefault();
+    var target = empty + d;
+    var sameRow = Math.floor(target / COLS) === Math.floor(empty / COLS);
+    if (Math.abs(d) === 1 && !sameRow) return;
+    if (target < 0 || target >= N) return;
+    tryMove(target);
+  });
+
+  document.getElementById('retry').addEventListener('click', start);
+  start();
+})();
+</script>
+</body>
+</html>
