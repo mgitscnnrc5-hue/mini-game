@@ -48,7 +48,6 @@
     .tile.done{color:#add581;background:#293522;border-color:#495e39}
     .tile.done::after{content:"";position:absolute;right:5px;bottom:5px;width:6px;height:3px;border-left:1px solid #bde590;border-bottom:1px solid #bde590;transform:rotate(-45deg)}
     .tile.wrong,.tile.expired{color:#ffd0c9;background:#55322d;border-color:var(--red)}
-    .tile.wrong::after{background:var(--red)}
     .tile.wrong{animation:nudge .16s linear}
     @keyframes nudge{25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
     .controls{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:17px 30px 20px;border-top:1px solid var(--line);background:#171a16}
@@ -71,7 +70,7 @@
 <body>
   <header class="top"><div class="bar"><div class="brand"><span class="logo" aria-hidden="true"></span>Cipher Relay</div><span class="mode"><i aria-hidden="true"></i>FiveM practice</span></div></header>
   <main>
-    <section class="intro"><div class="intro-text"><h1>Sequence hack</h1><p>Type all 30 letters from left to right in 15 seconds.</p></div><canvas id="signal" aria-hidden="true"></canvas></section>
+    <section class="intro"><div class="intro-text"><h1>Sequence hack</h1><p>Type 30 letters in 15 seconds. One wrong letter ends the round.</p></div><canvas id="signal" aria-hidden="true"></canvas></section>
     <section class="console" aria-label="Practice terminal">
       <div class="metrics">
         <div class="metric"><div class="label">Time left</div><div class="reading" role="timer"><span id="time">15.00</span><span class="unit">s</span></div></div>
@@ -92,7 +91,7 @@
     const byId = id => document.getElementById(id);
     const grid = byId('grid'), capture = byId('capture'), action = byId('action');
     const length = 30, duration = 15000, bestKey = 'cipher-relay.best-ms.v1';
-    let phase = 'idle', sequence = [], index = 0, misses = 0, deadline = 0, frame = 0, flash = 0, best = 0;
+    let phase = 'idle', sequence = [], index = 0, deadline = 0, frame = 0, best = 0;
     try { best = Number(localStorage.getItem(bestKey)) || 0; } catch {}
     function showBest() {
       byId('best').textContent = best > 0 && best < duration ? (best / 1000).toFixed(2) + ' s' : '—';
@@ -123,21 +122,24 @@
       grid.scrollLeft = Math.max(0, tile.offsetLeft - grid.clientWidth / 3);
       capture.setAttribute('aria-label', 'Type ' + sequence[index] + ', letter ' + (index + 1) + ' of 30');
     }
-    function finish(won, now) {
-      phase = won ? 'won' : 'lost';
+    function finish(result, now, enteredLetter) {
+      phase = result;
       cancelAnimationFrame(frame);
-      clearTimeout(flash);
       const remaining = Math.max(0, deadline - now);
       const elapsed = duration - remaining;
       byId('time').textContent = (remaining / 1000).toFixed(2);
-      if (won) {
+      if (result === 'won') {
         if (!(best > 0 && best <= elapsed)) {
           best = elapsed;
           try { localStorage.setItem(bestKey, String(best)); } catch {}
           showBest();
         }
         setStatus('Access granted', 'won');
-        byId('message').textContent = 'Cleared in ' + (elapsed / 1000).toFixed(2) + ' s · ' + misses + (misses === 1 ? ' mistake.' : ' mistakes.');
+        byId('message').textContent = 'Cleared in ' + (elapsed / 1000).toFixed(2) + ' s.';
+      } else if (result === 'wrong') {
+        grid.children[index].className = 'tile wrong';
+        setStatus('Round failed', 'lost');
+        byId('message').textContent = 'Entered ' + enteredLetter + ', expected ' + sequence[index] + '.';
       } else {
         grid.children[index].className = 'tile expired';
         setStatus('Time expired', 'lost');
@@ -150,16 +152,14 @@
     }
     function tick() {
       const now = performance.now();
-      if (now >= deadline) return finish(false, now);
+      if (now >= deadline) return finish('timeout', now);
       byId('time').textContent = ((deadline - now) / 1000).toFixed(2);
       frame = requestAnimationFrame(tick);
     }
     function start() {
       cancelAnimationFrame(frame);
-      clearTimeout(flash);
       sequence = makeSequence();
       index = 0;
-      misses = 0;
       phase = 'live';
       makeBoard();
       highlight();
@@ -177,21 +177,14 @@
     function typeLetter(letter) {
       if (phase !== 'live' || !/^[a-z]$/i.test(letter)) return;
       const now = performance.now();
-      if (now >= deadline) return finish(false, now);
+      if (now >= deadline) return finish('timeout', now);
       const tile = grid.children[index];
-      clearTimeout(flash);
-      if (letter.toUpperCase() !== sequence[index]) {
-        misses++;
-        tile.classList.add('wrong');
-        byId('message').textContent = 'Try ' + sequence[index] + ' again.';
-        flash = setTimeout(() => tile.classList.remove('wrong'), 200);
-        return;
-      }
+      const enteredLetter = letter.toUpperCase();
+      if (enteredLetter !== sequence[index]) return finish('wrong', now, enteredLetter);
       tile.className = 'tile done';
       index++;
       byId('count').textContent = String(index).padStart(2, '0');
-      if (index === length) return finish(true, now);
-      byId('message').textContent = 'Type the highlighted letter.';
+      if (index === length) return finish('won', now);
       highlight();
     }
     action.addEventListener('click', start);
@@ -211,9 +204,13 @@
       if (event.inputType !== 'insertFromPaste' && value.length === 1) typeLetter(value);
     });
     capture.addEventListener('paste', event => event.preventDefault());
-    grid.addEventListener('click', () => { if (phase === 'live') capture.focus({preventScroll:true}); });
+    grid.addEventListener('click', event => {
+      if (phase !== 'live') return;
+      if (event.target !== grid) typeLetter(event.target.textContent);
+      if (phase === 'live') capture.focus({preventScroll:true});
+    });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && phase === 'live' && performance.now() >= deadline) finish(false, performance.now());
+      if (!document.hidden && phase === 'live' && performance.now() >= deadline) finish('timeout', performance.now());
     });
     // Draw a dotted signal wave at the display's native resolution.
     function drawSignal() {
